@@ -1,178 +1,222 @@
+#攝影機
+import gradio as gr
+import tensorflow as tf
+import numpy as np
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
+import gdown
 import os
 import cv2
-import numpy as np
-import csv
+from threading import Thread
+from queue import Queue
 import time
-from matplotlib import pyplot as plt
-from datetime import datetime
 
-# 配置變數
-extension = '.jpg'
-patternsPath = 'solid_patterns/'
-databasePath = 'car_owners.csv'
+# 從Google Drive下載模型（請替換為實際的檔案ID）
+model_id = '1vhAAyel66fPNCa_zqFKSgswbC2hNANef'
+output = 'model_best.h5'
+if not os.path.exists(output):
+    gdown.download(f'https://drive.google.com/uc?id={model_id}', output, quiet=False)
 
-def extract_and_recognize_chars(plate_image, patterns_path):
-    # 獲取字符輪廓
-    contours, hierarchy = cv2.findContours(plate_image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    letters = []
+# 載入模型
+model = load_model(output)
 
-    # 過濾和提取字符
+def detect_license_plate(image):
+    # 將圖片轉換為灰度圖
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+    # 高斯模糊處理
+    blur = cv2.GaussianBlur(gray, (5,5), 0)
+
+    # 自適應閾值處理
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+
+    # 形態學操作
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, kernel)
+
+    # 邊緣檢測
+    edges = cv2.Canny(morph, 30, 200)
+
+    # 尋找輪廓
+    contours, _ = cv2.findContours(edges.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # 篩選可能的車牌區域
+    license_plate = None
+    max_area = 0
+
     for contour in contours:
-        rect = cv2.boundingRect(contour)
-        if (rect[3] > (rect[2] * 1.5)) and (rect[3] < (rect[2] * 3.5) and (rect[2] > 10)):
-            letters.append(rect)
+        area = cv2.contourArea(contour)
+        if area > 1000:
+            peri = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
 
-    # 排序並提取字符圖像
-    letter_images = []
-    for letter in sorted(letters, key=lambda s: s[0]):
-        x, y, w, h = letter
-        letter_images.append(plate_image[y:y+h, x:x+w])
+            if len(approx) >= 4 and len(approx) <= 8:
+                (x, y, w, h) = cv2.boundingRect(contour)
+                aspect_ratio = w / float(h)
 
-    # 識別字符
-    results = []
-    for letter_image in letter_images:
-        best_score = []
-        patterns = os.listdir(patterns_path)
+                # 車牌的寬高比和面積條件
+                if 2.0 <= aspect_ratio <= 5.0 and area > max_area:
+                    max_area = area
+                    # 提取稍大一點的區域，避免切到邊緣
+                    padding = 5
+                    y_start = max(y - padding, 0)
+                    y_end = min(y + h + padding, image.shape[0])
+                    x_start = max(x - padding, 0)
+                    x_end = min(x + w + padding, image.shape[1])
+                    license_plate = image[y_start:y_end, x_start:x_end]
 
-        for filename in patterns:
-            pattern_img = cv2.imdecode(np.fromfile(os.path.join(patterns_path, filename), dtype=np.uint8), 1)
-            pattern_gray = cv2.cvtColor(pattern_img, cv2.COLOR_RGB2GRAY)
-            _, pattern_binary = cv2.threshold(pattern_gray, 0, 255, cv2.THRESH_OTSU)
-            pattern_resized = cv2.resize(pattern_binary, (letter_image.shape[1], letter_image.shape[0]))
+    if license_plate is not None:
+        # 對車牌區域進行進一步的圖像增強
+        license_plate_gray = cv2.cvtColor(license_plate, cv2.COLOR_BGR2GRAY)
+        license_plate_eq = cv2.equalizeHist(license_plate_gray)
+        license_plate = cv2.cvtColor(license_plate_eq, cv2.COLOR_GRAY2BGR)
 
-            score = cv2.matchTemplate(letter_image, pattern_resized, cv2.TM_CCOEFF)[0][0]
-            best_score.append(score)
+    return license_plate
 
-        if best_score:
-            best_match = patterns[best_score.index(max(best_score))]
-            results.append(best_match.replace(extension, ''))
+def preprocess_image(image):
+    # 檢測車牌區域
+    plate = detect_license_plate(image)
+    if plate is None:
+        return None
 
-    return ''.join(results) if results else None
+    # 預處理車牌圖片
+    img = cv2.resize(plate, (224, 224))  # 調整大小
 
-def process_frame(frame, patterns_path):
-    try:
-        # 轉換顏色空間
-        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    # 轉換為灰度圖並進行圖像增強
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img_eq = cv2.equalizeHist(img_gray)
 
-        # 車牌檢測
-        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        denoised = cv2.bilateralFilter(gray, 11, 17, 17)
-        blurred = cv2.GaussianBlur(denoised, (5, 5), 0)
-        edges = cv2.Canny(blurred, 170, 200)
-        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    # 二值化處理
+    _, img_thresh = cv2.threshold(img_eq, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-        # 尋找可能的車牌區域
-        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:30]:
-            approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
-            if len(approx) == 4:
-                x, y, w, h = cv2.boundingRect(contour)
+    # 去除噪點
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    img_denoise = cv2.morphologyEx(img_thresh, cv2.MORPH_OPEN, kernel)
 
-                # 檢查區域大小是否合理（避免誤檢）
-                if w < 60 or h < 20:  # 太小的區域跳過
-                    continue
+    # 正規化並擴展維度
+    img_norm = img_denoise.astype(np.float32) / 255.0
+    img_final = np.expand_dims(img_norm, axis=0)
 
-                # 檢查長寬比是否符合車牌特徵
-                aspect_ratio = float(w) / h
-                if not (2.0 <= aspect_ratio <= 5.5):  # 車牌的典型長寬比範圍
-                    continue
+    return img_final
 
-                # 繪製檢測框
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+def predict_image(image):
+    # 預處理圖片
+    processed_img = preprocess_image(image)
+    if processed_img is None:
+        return {"未檢測到車牌": 1.0}
 
-                # 提取車牌區域
-                plate_region = frame_bgr[y:y + h, x:x + w]
-                if plate_region.size == 0:
-                    continue
+    # 進行預測
+    prediction = model.predict(processed_img)
 
-                # 處理車牌圖像
-                _, plate_binary = cv2.threshold(
-                    cv2.cvtColor(
-                        cv2.GaussianBlur(plate_region, (3, 3), 0),
-                        cv2.COLOR_RGB2GRAY
-                    ),
-                    0, 255, cv2.THRESH_OTSU
-                )
+    # 解碼預測結果
+    license_plate = decode_predictions(prediction[0])
 
-                # 提取字符
-                plate_number = extract_and_recognize_chars(plate_binary, patterns_path)
-                if plate_number:
-                    # 在畫面上顯示車牌號碼
-                    cv2.putText(
-                        frame,
-                        f"車牌: {plate_number}",
-                        (x, y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 255, 0),
-                        2
-                    )
-                    return frame, plate_number
+    # 計算置信度分數
+    confidence_scores = np.max(prediction[0], axis=-1)
+    mean_confidence = float(np.mean(confidence_scores))
 
-        return frame, None
-    except Exception as e:
-        print(f"處理幀時發生錯誤: {str(e)}")
-        return frame, None
+    # 驗證車牌格式
+    if validate_license_plate(license_plate):
+        return {f'車牌號碼: {license_plate}': mean_confidence}
+    else:
+        return {"無效的車牌號碼": mean_confidence}
 
-def start_camera_recognition():
-    # 添加視窗設置
-    cv2.namedWindow('License Plate Recognition', cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('License Plate Recognition', 1280, 720)
+def decode_predictions(pred):
+    # 假設模型輸出為每個字符的機率分布
+    # 這裡需要根據實際模型輸出格式進行調整
+    char_list = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+    result = ''
 
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    # 對每個字符位置選擇最高機率的字符
+    for char_prob in pred:
+        if len(char_prob) == len(char_list):
+            char_idx = np.argmax(char_prob)
+            result += char_list[char_idx]
 
-    if not cap.isOpened():
-        print("無法開啟攝像頭")
-        return
+    return result
 
-    last_recognition_time = 0
-    recognition_cooldown = 2
+def validate_license_plate(plate):
+    # 驗證車牌格式是否符合規範
+    # 這裡需要根據實際車牌格式規則進行調整
+    if not plate:
+        return False
 
-    try:
+    # 檢查長度（假設台灣車牌為7位）
+    if len(plate) != 7:
+        return False
+
+    # 檢查格式（假設格式為：2英文+5數字）
+    if not (plate[:2].isalpha() and plate[2:].isdigit()):
+        return False
+
+    return True
+
+class VideoStream:
+    def __init__(self, src=0):
+        self.stream = cv2.VideoCapture(src)
+        self.stopped = False
+        self.queue = Queue(maxsize=3)
+
+    def start(self):
+        Thread(target=self.update, args=()).start()
+        return self
+
+    def update(self):
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("無法讀取攝像頭畫面")
-                break
+            if self.stopped:
+                return
+            if not self.queue.full():
+                ret, frame = self.stream.read()
+                if not ret:
+                    self.stop()
+                    return
+                if not self.queue.full():
+                    self.queue.put(frame)
 
-            # 添加幀率顯示
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            cv2.putText(frame, f"FPS: {int(fps)}", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    def read(self):
+        return self.queue.get() if not self.queue.empty() else None
 
-            current_time = time.time()
+    def stop(self):
+        self.stopped = True
+        self.stream.release()
 
-            if current_time - last_recognition_time >= recognition_cooldown:
-                processed_frame, plate_number = process_frame(frame, patternsPath)
+def process_camera_feed():
+    vs = VideoStream(src=0).start()
+    time.sleep(2.0)  # 等待攝影機初始化
 
-                if plate_number:
-                    last_recognition_time = current_time
-                    try:
-                        with open(databasePath, mode="r", encoding="utf-8-sig") as file:
-                            reader = csv.DictReader(file)
-                            for row in reader:
-                                if row["車牌號碼"].strip() == plate_number:
-                                    info = f"""
-時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-車牌號碼: {plate_number}
-車主姓名: {row['車主姓名']}
-{'='*30}"""
-                                    print(info)
-                                    break
-                    except FileNotFoundError:
-                        print("無法讀取資料庫文件")
-            else:
-                processed_frame = frame
+    last_prediction_time = 0
+    prediction_interval = 1.0  # 每秒預測一次
 
-            cv2.imshow('License Plate Recognition', processed_frame)
+    while True:
+        frame = vs.read()
+        if frame is None:
+            continue
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+        current_time = time.time()
+        if current_time - last_prediction_time >= prediction_interval:
+            # 進行車牌辨識
+            result = predict_image(frame)
+            last_prediction_time = current_time
 
-    finally:
-        cap.release()
-        cv2.destroyAllWindows()
+        # 在影像上顯示辨識結果
+        for text, conf in result.items():
+            cv2.putText(frame, f"{text}: {conf:.2f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
+        return frame, result
+
+# 創建 Gradio 界面
+iface = gr.Interface(
+    fn=process_camera_feed,
+    inputs=None,
+    outputs=[gr.Image(label="攝影機畫面"), gr.Label(num_top_classes=1)],
+    title="即時車牌辨識系統",
+    description="使用攝影機進行即時車牌辨識。",
+    live=True,
+    refresh_per_second=10
+)
+
+# 啟動應用
 if __name__ == "__main__":
-    start_camera_recognition()
+    iface.launch()
