@@ -4,11 +4,80 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>車牌辨識系統</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+        .camera-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .video-feed {
+            width: 100%;
+            max-width: 640px;
+            height: auto;
+            border-radius: 5px;
+            border: 2px solid #dee2e6;
+        }
+        .info-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.1);
+        }
+        .control-panel {
+            margin-top: 20px;
+        }
+    </style>
 </head>
 <body>
-    <h1>即時車牌辨識系統</h1>
-    <div>
-        <img src="{{ url_for('video_feed') }}" width="640" height="480">
+    <div class="container">
+        <h1 class="text-center mb-4">即時車牌辨識系統</h1>
+        
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="camera-container">
+                    <h4 class="mb-3">即時攝影機畫面</h4>
+                    <img src="{{ url_for('video_feed') }}" class="video-feed" alt="即時攝影機畫面">
+                    <div class="control-panel text-center">
+                        <button class="btn btn-primary me-2" onclick="startCamera()">開始辨識</button>
+                        <button class="btn btn-danger" onclick="stopCamera()">停止辨識</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-4">
+                <div class="info-panel">
+                    <h4 class="mb-3">辨識結果</h4>
+                    <div class="mb-3">
+                        <label class="form-label">車牌號碼</label>
+                        <div id="plateNumber" class="alert alert-info">等待辨識...</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">車主資訊</label>
+                        <div id="ownerInfo" class="alert alert-info">等待辨識...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function startCamera() {
+            // 實作開始辨識的功能
+            console.log('開始辨識');
+        }
+
+        function stopCamera() {
+            // 實作停止辨識的功能
+            console.log('停止辨識');
+        }
+    </script>
 </body>
 </html>
