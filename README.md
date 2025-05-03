@@ -26,3 +26,11 @@
 ✅ 將辨識結果顯示於網頁上
 
 ✅ 可拍攝一張圖片並顯示車主名稱 10 秒（防止重複辨識）
+
+## 🛠️ 安裝與執行方式
+
+### 1️⃣ 安裝 Python 套件
+
+pip install  opencv-python pillow pyocr numpy pandas
+
+### 2️⃣ 安裝 Tesseract-OCR（OCR 引擎）
