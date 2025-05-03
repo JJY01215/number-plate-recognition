@@ -29,7 +29,7 @@ tool = tools[0]
 detector = cv2.CascadeClassifier('haar_carplate.xml')
 
 # 讀取 CSV 檔案
-def load_vehicle_data(csv_file='vehicle_data.csv'):
+def load_vehicle_data(csv_file='car.csv'):
     # 使用 pandas 讀取 CSV
     return pd.read_csv(csv_file)
 
