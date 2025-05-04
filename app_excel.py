@@ -84,15 +84,14 @@ def ocr_recognition(image_path='result.jpg'):
 # 讀取車輛資料 CSV
 vehicle_data = load_vehicle_data('vehicle_data.csv')
 
-# LINE Bot 設定（記得填入你自己的 token 和 secret）
+# LINE Bot 設定
 line_bot_api = LineBotApi('uFHbI+8o1U8yez1l+XeX49ApmXY59K7WKkqVFbxpBvsZwLBXaHKxs1ai/R4S5a4yAWED+m+lsSNvEkVks8Io7Y1c3XDEXLH4YpsrVJcNkjKfxmaTAmdjMYTLFIU6CBS9fGBl693+DiVH4/pamNdxOwdB04t89/1O/w1cDnyilFU=')
 handler = WebhookHandler('de7491351d0c4f906259d352df34e63a')
-your_user_id = 'U932c52b32c3de90e108da3e55af77548'  # 這裡請填入你自己的 LINE 使用者 ID
+your_user_id = 'U932c52b32c3de90e108da3e55af77548'  # 替換為你自己的 ID
 
 # Flask 初始化
 app = Flask(__name__)
 
-# 接收 LINE Webhook 的端點
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -110,14 +109,13 @@ font = ImageFont.truetype(font_path, 36)
 # 啟動攝影機
 cap = cv2.VideoCapture(0)
 
-# 車主資訊記錄
 last_detection_time = 0
 car_owner = ""
+last_plate = ""
 detection_in_progress = False
 
 print("📷 開始從攝影機擷取畫面進行車牌辨識...（按 q 結束）")
 
-# 主迴圈
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -127,6 +125,7 @@ while True:
         frame_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(frame_pil)
         draw.text((50, 50), f"車主：{car_owner}", font=font, fill=(0, 255, 0))
+        draw.text((50, 100), f"車牌：{last_plate}", font=font, fill=(0, 255, 0))
         frame = cv2.cvtColor(np.array(frame_pil), cv2.COLOR_RGB2BGR)
 
         cv2.imshow("原始攝影畫面", frame)
@@ -153,16 +152,22 @@ while True:
     if result_img is not None:
         txt, txt_plate = ocr_recognition('result.jpg')
         print("🔤 原始辨識：", txt)
-        print("✅ 優化結果：", txt_plate)
+        print("✅ 優化結果（車牌）：", txt_plate)
 
         vehicle_info = get_vehicle_info(txt_plate, vehicle_data)
         if vehicle_info is not None:
             car_owner = vehicle_info['車主姓名']
+            last_plate = txt_plate
             last_detection_time = time.time()
             detection_in_progress = True
 
-            # 發送訊息到 LINE
-            line_bot_api.push_message(your_user_id, TextSendMessage(text=f"🚗 偵測到車主：{car_owner}"))
+            print(f"👤 車主姓名：{car_owner}")
+
+            # 發送 LINE 訊息
+            line_bot_api.push_message(
+                your_user_id,
+                TextSendMessage(text=f"🚗 偵測到車主：{car_owner}\n📋 車牌號碼：{txt_plate}")
+            )
 
     cv2.imshow("原始攝影畫面", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
